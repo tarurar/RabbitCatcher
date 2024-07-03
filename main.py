@@ -9,6 +9,7 @@ the queue name and one for the vhost.
 import argparse
 import configparser
 import re
+from urllib.parse import urljoin
 
 import requests
 
@@ -66,7 +67,9 @@ def delete_queue(queue_json) -> int:
     Should be a result of a GET request to the RabbitMQ Management API.
     :return: The status code of the DELETE request.
     """
-    delete_url = f"{QUEUES_API_URL}/{VHOST}/{queue_json['name']}"
+    vhost_norm = VHOST.lstrip("/")
+    vhost_url = urljoin(QUEUES_API_URL, vhost_norm)
+    delete_url = urljoin(vhost_url, queue_json["name"])
     delete_response = requests.delete(
         delete_url, auth=(USERNAME, PASSWORD), timeout=5
     )
