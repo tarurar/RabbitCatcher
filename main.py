@@ -9,7 +9,7 @@ the queue name and one for the vhost.
 import argparse
 import configparser
 import re
-from urllib.parse import urljoin
+import pika
 
 import requests
 
@@ -43,6 +43,21 @@ parser.add_argument(
     default=config.get("Defaults", "vhost"),
     help="RabbitMQ vhost",
 )
+
+parser.add_argument(
+    "--port",
+    type=int,
+    default=config.get("Defaults", "port"),
+    help="RabbitMQ port",
+)
+
+parser.add_argument(
+    "--api_port",
+    type=int,
+    default=config.get("Defaults", "api_port"),
+    help="RabbitMQ Management API port",
+)
+
 parser.add_argument(
     "--pattern",
     type=str,
@@ -55,25 +70,10 @@ args = parser.parse_args()
 USERNAME = args.username
 PASSWORD = args.password
 HOST = args.host
+API_PORT = args.api_port
+PORT = args.port
 VHOST = args.vhost
-QUEUES_API_URL = f"{HOST}/api/queues"
-
-
-def delete_queue(queue_json) -> int:
-    """
-    Deletes a queue using the RabbitMQ Management HTTP API.
-
-    :param queue_json: The JSON object representing the queue.
-    Should be a result of a GET request to the RabbitMQ Management API.
-    :return: The status code of the DELETE request.
-    """
-    vhost_norm = VHOST.lstrip("/")
-    vhost_url = urljoin(QUEUES_API_URL, vhost_norm)
-    delete_url = urljoin(vhost_url, queue_json["name"])
-    delete_response = requests.delete(
-        delete_url, auth=(USERNAME, PASSWORD), timeout=5
-    )
-    return delete_response.status_code
+QUEUES_API_URL = f"http://{HOST}:{API_PORT}/api/queues"
 
 
 def get_queues() -> list:
@@ -96,20 +96,18 @@ if __name__ == "__main__":
 
     queues = get_queues()
 
-    for queue in queues:
-        if name_pattern.match(queue["name"]) and queue["vhost"] == VHOST:
-            if config.getboolean("Actions", "deletion_dry_run", fallback=True):
-                print(
-                    f"Would delete queue {queue['name']} on vhost {queue['vhost']}"
-                )
-                continue
+    connection_params = pika.ConnectionParameters(
+        host=HOST, port=PORT, virtual_host=VHOST, credentials=pika.PlainCredentials(USERNAME, PASSWORD)
+    )
 
-            status_code = delete_queue(queue)
-            if status_code == 204:
-                print(
-                    f"Queue {queue['name']} deleted on vhost {queue['vhost']}"
-                )
-            else:
-                print(
-                    f"Error deleting queue {queue['name']} on vhost {queue['vhost']}: {status_code}"
-                )
+    with pika.BlockingConnection(connection_params) as connection:
+        channel = connection.channel()
+        for queue in queues:
+            if name_pattern.match(queue["name"]) and queue["vhost"] == VHOST:
+                if config.getboolean("Actions", "deletion_dry_run", fallback=True):
+                    print(
+                        f"Would delete queue {queue['name']} on vhost {queue['vhost']}"
+                    )
+                    continue
+                channel.queue_delete(queue['name'])
+                print(f"Deleted queue {queue['name']} on vhost {queue['vhost']}")
